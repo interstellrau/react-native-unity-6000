@@ -52,13 +52,20 @@ static UnityFramework* UnityFrameworkLoad(void) {
         return;
     }
 
+    // ✅ If already initialized, just re-register the bridge
     if ([self unityIsInitialized]) {
-        NSLog(@"[RNUnityView] Unity already initialized — skipping duplicate start.");
+        NSLog(@"[RNUnityView] Unity already initialized — re-registering FrameworkLibAPI bridge.");
+        [NSClassFromString(@"FrameworkLibAPI") registerAPIforNativeCalls:self];
+
+        UIView *rootView = [[[self ufw] appController] rootView];
+        if (rootView && ![self.subviews containsObject:rootView]) {
+            [self addSubview:rootView];
+        }
         return;
     }
 
     if (sUnityBootStarted) {
-        NSLog(@"[RNUnityView] Unity boot already in progress — skipping.");
+        NSLog(@"[RNUnityView] Unity boot already in progress — skipping duplicate init.");
         return;
     }
 
@@ -80,6 +87,7 @@ static UnityFramework* UnityFrameworkLoad(void) {
 
                 NSLog(@"[RNUnityView] Starting Unity instance...");
                 [[self ufw] runEmbeddedWithArgc:gArgc argv:argv appLaunchOpts:appLaunchOpts];
+                [[self ufw] setExecuteHeader:&_mh_execute_header];
                 [[self ufw] appController].quitHandler = ^(){};
 
                 [self.ufw.appController.rootView removeFromSuperview];
@@ -94,12 +102,13 @@ static UnityFramework* UnityFrameworkLoad(void) {
                 [[[[self ufw] appController] window] makeKeyAndVisible];
                 [[[[[[self ufw] appController] window] rootViewController] view] setNeedsLayout];
 
+                // ✅ Re-register native calls bridge
                 [NSClassFromString(@"FrameworkLibAPI") registerAPIforNativeCalls:self];
 
                 NSLog(@"[RNUnityView] Unity initialization complete.");
             }
             @catch (NSException *exception) {
-                NSLog(@"[RNUnityView] Exception during Unity init: %@", exception);
+                NSLog(@"[RNUnityView] ❌ Exception during Unity init: %@", exception);
                 sUnityBootStarted = NO;
             }
         }
@@ -127,6 +136,13 @@ static UnityFramework* UnityFrameworkLoad(void) {
     NSLog(@"[RNUnityView] Unity reset — ready for reinit.");
 }
 
+- (void)pauseUnity:(BOOL)pause {
+    if ([self unityIsInitialized]) {
+        NSLog(@"[RNUnityView] Pausing Unity: %@", pause ? @"YES" : @"NO");
+        [[self ufw] pause:pause];
+    }
+}
+
 - (void)unloadUnity {
     dispatch_async(dispatch_get_main_queue(), ^{
         UIWindow *main = [[[UIApplication sharedApplication] delegate] window];
@@ -143,11 +159,7 @@ static UnityFramework* UnityFrameworkLoad(void) {
     [super layoutSubviews];
     if ([self unityIsInitialized]) {
         self.ufw.appController.rootView.frame = self.bounds;
-        if (![NSThread isMainThread]) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [self addSubview:self.ufw.appController.rootView];
-            });
-        } else {
+        if (![self.subviews containsObject:self.ufw.appController.rootView]) {
             [self addSubview:self.ufw.appController.rootView];
         }
     }
@@ -172,6 +184,10 @@ static UnityFramework* UnityFrameworkLoad(void) {
 
 - (void)postMessage:(NSString *)gameObject methodName:(NSString *)methodName message:(NSString *)message {
     dispatch_async(dispatch_get_main_queue(), ^{
+        if (![self unityIsInitialized]) {
+            NSLog(@"[RNUnityView] ⚠️ postMessage called before Unity initialized.");
+            return;
+        }
         [[self ufw] sendMessageToGOWithName:[gameObject UTF8String]
                                 functionName:[methodName UTF8String]
                                      message:[message UTF8String]];
@@ -207,7 +223,6 @@ static UnityFramework* UnityFrameworkLoad(void) {
     if (self) {
         NSLog(@"[RNUnityView] initWithFrame — ensuring Unity (re)start.");
 
-        // Force reinit each time UnityView mounts
         sUnityBootStarted = NO;
         [self setUfw:nil];
         sharedInstance = self;
