@@ -44,75 +44,43 @@ static UnityFramework* UnityFrameworkLoad(void) {
 
 #pragma mark - Unity Initialization
 
-- (void)initUnityModuleOnMainRunloop {
-    if (![NSThread isMainThread]) {
-        dispatch_async(dispatch_get_main_queue(), ^{
-            [self initUnityModuleOnMainRunloop];
-        });
-        return;
-    }
+- (void)initUnityModule {
+    @try {
+        if([self unityIsInitialized]) {
+            return;
+        }
 
-    // ✅ If already initialized, just re-register the bridge
-    if ([self unityIsInitialized]) {
-        NSLog(@"[RNUnityView] Unity already initialized — re-registering FrameworkLibAPI bridge.");
+        [self setUfw: UnityFrameworkLoad()];
+        [[self ufw] registerFrameworkListener: self];
+
+        unsigned count = (int) [[[NSProcessInfo processInfo] arguments] count];
+        char **array = (char **)malloc((count + 1) * sizeof(char*));
+
+        for (unsigned i = 0; i < count; i++)
+        {
+             array[i] = strdup([[[[NSProcessInfo processInfo] arguments] objectAtIndex:i] UTF8String]);
+        }
+        array[count] = NULL;
+
+        [[self ufw] runEmbeddedWithArgc: gArgc argv: array appLaunchOpts: appLaunchOpts];
+        [[self ufw] appController].quitHandler = ^(){ NSLog(@"AppController.quitHandler called"); };
+        [self.ufw.appController.rootView removeFromSuperview];
+
+        if (@available(iOS 13.0, *)) {
+            [[[[self ufw] appController] window] setWindowScene: nil];
+        } else {
+            [[[[self ufw] appController] window] setScreen: nil];
+        }
+
+        [[[[self ufw] appController] window] addSubview: self.ufw.appController.rootView];
+        [[[[self ufw] appController] window] makeKeyAndVisible];
+        [[[[[[self ufw] appController] window] rootViewController] view] setNeedsLayout];
+
         [NSClassFromString(@"FrameworkLibAPI") registerAPIforNativeCalls:self];
-
-        UIView *rootView = [[[self ufw] appController] rootView];
-        if (rootView && ![self.subviews containsObject:rootView]) {
-            [self addSubview:rootView];
-        }
-        return;
     }
-
-    if (sUnityBootStarted) {
-        NSLog(@"[RNUnityView] Unity boot already in progress — skipping duplicate init.");
-        return;
+    @catch (NSException *e) {
+        NSLog(@"%@",e);
     }
-
-    sUnityBootStarted = YES;
-
-    dispatch_async(dispatch_get_main_queue(), ^{
-        @autoreleasepool {
-            @try {
-                NSLog(@"[RNUnityView] Loading UnityFramework bundle...");
-                [self setUfw:UnityFrameworkLoad()];
-                [[self ufw] registerFrameworkListener:self];
-
-                unsigned count = (unsigned)[[[NSProcessInfo processInfo] arguments] count];
-                char **argv = (char **)malloc((count + 1) * sizeof(char *));
-                for (unsigned i = 0; i < count; i++) {
-                    argv[i] = strdup([[[[NSProcessInfo processInfo] arguments] objectAtIndex:i] UTF8String]);
-                }
-                argv[count] = NULL;
-
-                NSLog(@"[RNUnityView] Starting Unity instance...");
-                [[self ufw] runEmbeddedWithArgc:gArgc argv:argv appLaunchOpts:appLaunchOpts];
-                [[self ufw] setExecuteHeader:&_mh_execute_header];
-                [[self ufw] appController].quitHandler = ^(){};
-
-                [self.ufw.appController.rootView removeFromSuperview];
-
-                if (@available(iOS 13.0, *)) {
-                    [[[[self ufw] appController] window] setWindowScene:nil];
-                } else {
-                    [[[[self ufw] appController] window] setScreen:nil];
-                }
-
-                [[[[self ufw] appController] window] addSubview:self.ufw.appController.rootView];
-                [[[[self ufw] appController] window] makeKeyAndVisible];
-                [[[[[[self ufw] appController] window] rootViewController] view] setNeedsLayout];
-
-                // ✅ Re-register native calls bridge
-                [NSClassFromString(@"FrameworkLibAPI") registerAPIforNativeCalls:self];
-
-                NSLog(@"[RNUnityView] Unity initialization complete.");
-            }
-            @catch (NSException *exception) {
-                NSLog(@"[RNUnityView] ❌ Exception during Unity init: %@", exception);
-                sUnityBootStarted = NO;
-            }
-        }
-    });
 }
 
 #pragma mark - Reset / Unload Unity
@@ -136,13 +104,6 @@ static UnityFramework* UnityFrameworkLoad(void) {
     NSLog(@"[RNUnityView] Unity reset — ready for reinit.");
 }
 
-- (void)pauseUnity:(BOOL)pause {
-    if ([self unityIsInitialized]) {
-        NSLog(@"[RNUnityView] Pausing Unity: %@", pause ? @"YES" : @"NO");
-        [[self ufw] pause:pause];
-    }
-}
-
 - (void)unloadUnity {
     dispatch_async(dispatch_get_main_queue(), ^{
         UIWindow *main = [[[UIApplication sharedApplication] delegate] window];
@@ -156,13 +117,16 @@ static UnityFramework* UnityFrameworkLoad(void) {
 #pragma mark - UIView Layout
 
 - (void)layoutSubviews {
-    [super layoutSubviews];
-    if ([self unityIsInitialized]) {
-        self.ufw.appController.rootView.frame = self.bounds;
-        if (![self.subviews containsObject:self.ufw.appController.rootView]) {
-            [self addSubview:self.ufw.appController.rootView];
-        }
-    }
+   [super layoutSubviews];
+
+   if(![self unityIsInitialized]) {
+      [self initUnityModule];
+   }
+
+   if([self unityIsInitialized]) {
+      self.ufw.appController.rootView.frame = self.bounds;
+      [self addSubview:self.ufw.appController.rootView];
+   }
 }
 
 #pragma mark - React Native Bridge
@@ -184,10 +148,6 @@ static UnityFramework* UnityFrameworkLoad(void) {
 
 - (void)postMessage:(NSString *)gameObject methodName:(NSString *)methodName message:(NSString *)message {
     dispatch_async(dispatch_get_main_queue(), ^{
-        if (![self unityIsInitialized]) {
-            NSLog(@"[RNUnityView] ⚠️ postMessage called before Unity initialized.");
-            return;
-        }
         [[self ufw] sendMessageToGOWithName:[gameObject UTF8String]
                                 functionName:[methodName UTF8String]
                                      message:[message UTF8String]];
@@ -219,18 +179,12 @@ static UnityFramework* UnityFrameworkLoad(void) {
 #pragma mark - React View Lifecycle
 
 - (instancetype)initWithFrame:(CGRect)frame {
-    self = [super initWithFrame:frame];
+  self = [super initWithFrame:frame];
+
     if (self) {
-        NSLog(@"[RNUnityView] initWithFrame — ensuring Unity (re)start.");
-
-        sUnityBootStarted = NO;
-        [self setUfw:nil];
-        sharedInstance = self;
-
-        dispatch_async(dispatch_get_main_queue(), ^{
-            [self initUnityModuleOnMainRunloop];
-        });
+        [self initUnityModule];
     }
+
     return self;
 }
 
