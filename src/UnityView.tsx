@@ -4,16 +4,19 @@ import NativeUnityView, { Commands } from './specs/UnityViewNativeComponent';
 import type { DirectEventHandler } from 'react-native/Libraries/Types/CodegenTypes';
 import { Platform } from 'react-native';
 
-type UnityViewContentUpdateEvent = Readonly<{
+export type UnityViewContentUpdateEvent = Readonly<{
   message: string;
 }>;
 
-type RNUnityViewProps = {
+export type UnityViewReadyEvent = Readonly<{}>;
+
+export type RNUnityViewProps = {
   androidKeepPlayerMounted?: boolean;
   fullScreen?: boolean;
   onUnityMessage?: DirectEventHandler<UnityViewContentUpdateEvent>;
   onPlayerUnload?: DirectEventHandler<UnityViewContentUpdateEvent>;
   onPlayerQuit?: DirectEventHandler<UnityViewContentUpdateEvent>;
+  onUnityReady?: DirectEventHandler<UnityViewReadyEvent>;
 };
 
 type ComponentRef = InstanceType<typeof NativeUnityView>;

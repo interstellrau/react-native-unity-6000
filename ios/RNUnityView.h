@@ -29,6 +29,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, copy) RCTBubblingEventBlock _Nullable onUnityMessage;
 @property (nonatomic, copy) RCTBubblingEventBlock _Nullable onPlayerUnload;
 @property (nonatomic, copy) RCTBubblingEventBlock _Nullable onPlayerQuit;
+@property (nonatomic, copy) RCTBubblingEventBlock _Nullable onUnityReady;
 
 - (void)unloadUnity;
 - (void)pauseUnity:(BOOL)pause;
@@ -52,6 +53,7 @@ NS_ASSUME_NONNULL_END
 @property (nonatomic, copy) RCTBubblingEventBlock _Nullable onUnityMessage;
 @property (nonatomic, copy) RCTBubblingEventBlock _Nullable onPlayerUnload;
 @property (nonatomic, copy) RCTBubblingEventBlock _Nullable onPlayerQuit;
+@property (nonatomic, copy) RCTBubblingEventBlock _Nullable onUnityReady;
 
 - (void)unloadUnity;
 - (void)pauseUnity:(BOOL)pause;

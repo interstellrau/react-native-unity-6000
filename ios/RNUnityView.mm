@@ -32,6 +32,10 @@ static UnityFramework* UnityFrameworkLoad(void) {
     return ufw;
 }
 
+@interface RNUnityView ()
+@property (nonatomic, assign) BOOL didEmitReady;
+@end
+
 @implementation RNUnityView
 
 #pragma mark - Helpers
@@ -141,6 +145,16 @@ static UnityFramework* UnityFrameworkLoad(void) {
       if (rootView.superview != self) {
          [self addSubview:rootView];
       }
+
+      // Signal readiness once per view, whether Unity booted just now or was
+      // already running when this view mounted. Lets JS drop fixed startup
+      // timeouts in favour of the onUnityReady event.
+      if (!self.didEmitReady) {
+         self.didEmitReady = YES;
+         if (self.onUnityReady) {
+            self.onUnityReady(@{});
+         }
+      }
    }
 }
 
@@ -151,7 +165,7 @@ static UnityFramework* UnityFrameworkLoad(void) {
 }
 
 - (NSArray<NSString *> *)supportedEvents {
-    return @[@"onUnityMessage", @"onPlayerUnload", @"onPlayerQuit"];
+    return @[@"onUnityMessage", @"onPlayerUnload", @"onPlayerQuit", @"onUnityReady"];
 }
 
 - (void)sendMessageToMobileApp:(NSString *)message {
@@ -199,6 +213,14 @@ static UnityFramework* UnityFrameworkLoad(void) {
     // risk the zero-width Metal texture crash.
 
     return self;
+}
+
+- (void)dealloc {
+    // Defensive: make sure Unity isn't left holding a listener pointer to a
+    // deallocated view, which would crash on the next lifecycle notification.
+    if (_ufw) {
+        [_ufw unregisterFrameworkListener:self];
+    }
 }
 
 @end

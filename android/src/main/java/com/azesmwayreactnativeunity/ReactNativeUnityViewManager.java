@@ -47,37 +47,41 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
   @NonNull
   @Override
   public ReactNativeUnityView createViewInstance(@NonNull ThemedReactContext context) {
-    view = new ReactNativeUnityView(this.context);
-    view.addOnAttachStateChangeListener(this);
+    final ReactNativeUnityView unityView = new ReactNativeUnityView(this.context);
+    unityView.addOnAttachStateChangeListener(this);
+    view = unityView;
 
     if (getPlayer() != null) {
         try {
-            view.setUnityPlayer(getPlayer());
+            unityView.setUnityPlayer(getPlayer());
         } catch (InvocationTargetException | NoSuchMethodException | IllegalAccessException e) {
             Log.e(TAG, "Failed to attach existing Unity player to view", e);
         }
+        // Unity is already running; signal readiness on the next frame, once the
+        // JS-side onUnityReady handler has been wired up.
+        unityView.post(new Runnable() {
+            @Override
+            public void run() {
+                emitEvent(unityView, "onUnityReady", null);
+            }
+        });
     } else {
         try {
             createPlayer(context.getCurrentActivity(), new UnityPlayerCallback() {
               @Override
               public void onReady() throws InvocationTargetException, NoSuchMethodException, IllegalAccessException {
-                view.setUnityPlayer(getPlayer());
+                unityView.setUnityPlayer(getPlayer());
+                emitEvent(unityView, "onUnityReady", null);
               }
 
               @Override
               public void onUnload() {
-                WritableMap data = Arguments.createMap();
-                data.putString("message", "MyMessage");
-                ReactContext reactContext = (ReactContext) view.getContext();
-                reactContext.getJSModule(RCTEventEmitter.class).receiveEvent(view.getId(), "onPlayerUnload", data);
+                emitEvent(unityView, "onPlayerUnload", "MyMessage");
               }
 
               @Override
               public void onQuit() {
-                WritableMap data = Arguments.createMap();
-                data.putString("message", "MyMessage");
-                ReactContext reactContext = (ReactContext) view.getContext();
-                reactContext.getJSModule(RCTEventEmitter.class).receiveEvent(view.getId(), "onPlayerQuit", data);
+                emitEvent(unityView, "onPlayerQuit", "MyMessage");
               }
             });
         } catch (InvocationTargetException | NoSuchMethodException | IllegalAccessException e) {
@@ -85,7 +89,29 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
         }
     }
 
-    return view;
+    return unityView;
+  }
+
+  // Null-safe event emit. Guards against a detached/dropped view or a torn-down
+  // React context (e.g. a late Unity callback after navigating away), which
+  // previously could NPE or crash.
+  private static void emitEvent(ReactNativeUnityView target, String eventName, @Nullable String message) {
+    if (target == null || target.getId() == View.NO_ID) {
+      return;
+    }
+    if (!(target.getContext() instanceof ReactContext)) {
+      return;
+    }
+    ReactContext reactContext = (ReactContext) target.getContext();
+    WritableMap data = Arguments.createMap();
+    if (message != null) {
+      data.putString("message", message);
+    }
+    try {
+      reactContext.getJSModule(RCTEventEmitter.class).receiveEvent(target.getId(), eventName, data);
+    } catch (Exception e) {
+      Log.e(TAG, "Failed to emit " + eventName, e);
+    }
   }
 
   @Override
@@ -99,6 +125,7 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
     export.put("onUnityMessage", MapBuilder.of("registrationName", "onUnityMessage"));
     export.put("onPlayerUnload", MapBuilder.of("registrationName", "onPlayerUnload"));
     export.put("onPlayerQuit", MapBuilder.of("registrationName", "onPlayerQuit"));
+    export.put("onUnityReady", MapBuilder.of("registrationName", "onUnityReady"));
 
     return export;
   }
@@ -167,15 +194,18 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
   }
 
   public static void sendMessageToMobileApp(String message) {
-    WritableMap data = Arguments.createMap();
-    data.putString("message", message);
-    ReactContext reactContext = (ReactContext) view.getContext();
-    reactContext.getJSModule(RCTEventEmitter.class).receiveEvent(view.getId(), "onUnityMessage", data);
+    // Called by Unity (statically, via JNI) so it must use the shared view
+    // reference. emitEvent() guards against it being stale/detached.
+    emitEvent(view, "onUnityMessage", message);
   }
 
   @Override
   public void onDropViewInstance(ReactNativeUnityView view) {
     view.removeOnAttachStateChangeListener(this);
+    // Don't leak (or emit to) a dropped view via the static reference.
+    if (ReactNativeUnityViewManager.view == view) {
+      ReactNativeUnityViewManager.view = null;
+    }
     super.onDropViewInstance(view);
   }
 
@@ -199,8 +229,10 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
   @Override
   public void onHostDestroy() {
     if (isUnityReady()) {
-      assert getPlayer() != null;
-      getPlayer().destroy();
+      // Tear down and reset state (nulls the player, clears ready/paused flags)
+      // so the next launch recreates Unity cleanly instead of reusing a
+      // destroyed player.
+      ReactNativeUnity.destroy();
     }
   }
 

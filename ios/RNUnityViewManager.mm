@@ -12,18 +12,17 @@ RCT_EXPORT_MODULE(RNUnityView)
 RCT_EXPORT_VIEW_PROPERTY(onUnityMessage, RCTBubblingEventBlock)
 RCT_EXPORT_VIEW_PROPERTY(onPlayerUnload, RCTBubblingEventBlock)
 RCT_EXPORT_VIEW_PROPERTY(onPlayerQuit, RCTBubblingEventBlock)
-
-RNUnityView *unity;
+RCT_EXPORT_VIEW_PROPERTY(onUnityReady, RCTBubblingEventBlock)
 
 - (UIView *)view {
-    unity = [[RNUnityView alloc] init];
-    UIWindow * main = [[[UIApplication sharedApplication] delegate] window];
+    RNUnityView *unityView = [[RNUnityView alloc] init];
+    UIWindow *main = [[[UIApplication sharedApplication] delegate] window];
 
-    if(main != nil) {
+    if (main != nil) {
         [main makeKeyAndVisible];
     }
 
-    return unity;
+    return unityView;
 }
 
 - (dispatch_queue_t)methodQueue {
@@ -41,7 +40,7 @@ RCT_EXPORT_METHOD(postMessage:(nonnull NSNumber*) reactTag gameObject:(NSString*
             RCTLogError(@"Cannot find NativeView with tag #%@", reactTag);
             return;
         }
-        [unity postMessage:(NSString *)gameObject methodName:(NSString *)methodName message:(NSString *)message];
+        [view postMessage:(NSString *)gameObject methodName:(NSString *)methodName message:(NSString *)message];
     }];
 }
 
@@ -74,12 +73,12 @@ RCT_EXPORT_METHOD(unloadUnity:(nonnull NSNumber*) reactTag) {
            RCTLogError(@"Cannot find NativeView with tag #%@", reactTag);
            return;
        }
-       [unity unloadUnity];
+       [view unloadUnity];
    }];
 }
 
 - (NSArray<NSString *> *)supportedEvents {
-   return @[@"onUnityMessage", @"onPlayerUnload", @"onPlayerQuit"];
+   return @[@"onUnityMessage", @"onPlayerUnload", @"onPlayerQuit", @"onUnityReady"];
 }
 
 @end
