@@ -47,6 +47,9 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
   @NonNull
   @Override
   public ReactNativeUnityView createViewInstance(@NonNull ThemedReactContext context) {
+    if (DEBUG_TIMING) {
+      Log.i(TIMING_TAG, "createViewInstance (existing player=" + (getPlayer() != null) + ")");
+    }
     final ReactNativeUnityView unityView = new ReactNativeUnityView(this.context);
     unityView.addOnAttachStateChangeListener(this);
     view = unityView;
@@ -70,6 +73,7 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
             createPlayer(context.getCurrentActivity(), new UnityPlayerCallback() {
               @Override
               public void onReady() throws InvocationTargetException, NoSuchMethodException, IllegalAccessException {
+                if (DEBUG_TIMING) Log.i(TIMING_TAG, "onReady: attaching player to RN view + emitting onUnityReady");
                 unityView.setUnityPlayer(getPlayer());
                 emitEvent(unityView, "onUnityReady", null);
               }
@@ -194,6 +198,9 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
   }
 
   public static void sendMessageToMobileApp(String message) {
+    if (DEBUG_TIMING) {
+      Log.i(TIMING_TAG, "Unity->RN sendMessageToMobileApp on thread=" + Thread.currentThread().getName() + " msg=" + message);
+    }
     // Called by Unity (statically, via JNI) so it must use the shared view
     // reference. emitEvent() guards against it being stale/detached.
     emitEvent(view, "onUnityMessage", message);
@@ -271,9 +278,18 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
 
   @Override
   public void postMessage(ReactNativeUnityView view, String gameObject, String methodName, String message) {
+    // Timing note: this runs when the RN bridge forwards the message. Compare its
+    // timestamp to when Unity actually processes it (your C# "Received message"
+    // log). A large gap here = Unity's main thread was blocked while this queued.
+    if (DEBUG_TIMING) {
+      Log.i(TIMING_TAG, "RN->Unity postMessage " + gameObject + "/" + methodName
+          + " ready=" + isUnityReady() + " thread=" + Thread.currentThread().getName());
+    }
     if (isUnityReady()) {
       assert getPlayer() != null;
       UPlayer.UnitySendMessage(gameObject, methodName, message);
+    } else if (DEBUG_TIMING) {
+      Log.w(TIMING_TAG, "RN->Unity postMessage DROPPED (Unity not ready yet): " + gameObject + "/" + methodName);
     }
   }
 }

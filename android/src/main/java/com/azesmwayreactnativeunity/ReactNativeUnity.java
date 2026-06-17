@@ -15,6 +15,10 @@ import java.lang.reflect.InvocationTargetException;
 
 public class ReactNativeUnity {
     private static final String TAG = "ReactNativeUnity";
+    // Diagnostic startup/message timing (logcat tag "RNUnityTiming").
+    // Set false for production — this is for tracing the embedded load path.
+    public static final boolean DEBUG_TIMING = true;
+    static final String TIMING_TAG = "RNUnityTiming";
     // Non-blocking delay (ms) between constructing the UnityPlayer and attaching
     // it. Tunable: lower shows Unity sooner, but risks a startup race on slower
     // devices. Previously this was a blocking Thread.sleep on the UI thread.
@@ -53,6 +57,7 @@ public class ReactNativeUnity {
         activity.runOnUiThread(new Runnable() {
             @Override
             public void run() {
+                if (DEBUG_TIMING) Log.i(TIMING_TAG, "createPlayer.run begin on thread=" + Thread.currentThread().getName());
                 activity.getWindow().setFormat(PixelFormat.RGBA_8888);
                 int flag = activity.getWindow().getAttributes().flags;
                 final boolean fullScreen =
@@ -69,6 +74,7 @@ public class ReactNativeUnity {
                     // NPE-ing on the calls below.
                     return;
                 }
+                if (DEBUG_TIMING) Log.i(TIMING_TAG, "UnityPlayer constructed; attach scheduled in " + UNITY_STARTUP_DELAY_MS + "ms");
 
                 // Give UnityPlayer a moment to spin up its native side before we
                 // attach and resume it. This used to be a blocking
@@ -82,6 +88,8 @@ public class ReactNativeUnity {
                         if (unityPlayer == null) {
                             return;
                         }
+
+                        if (DEBUG_TIMING) Log.i(TIMING_TAG, "post-delay attach begin on thread=" + Thread.currentThread().getName());
 
                         // start unity
                         try {
@@ -106,6 +114,7 @@ public class ReactNativeUnity {
                         }
 
                         _isUnityReady = true;
+                        if (DEBUG_TIMING) Log.i(TIMING_TAG, "_isUnityReady=true; invoking onReady (player attached + resumed)");
 
                         try {
                             callback.onReady();

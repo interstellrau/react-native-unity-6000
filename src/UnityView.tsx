@@ -4,6 +4,10 @@ import NativeUnityView, { Commands } from './specs/UnityViewNativeComponent';
 import type { DirectEventHandler } from 'react-native/Libraries/Types/CodegenTypes';
 import { Platform } from 'react-native';
 
+// Diagnostic timing logs (logcat: tag ReactNativeJS, content "[RNUnityTiming]").
+// Set to false for production.
+const DEBUG_TIMING = true;
+
 export type UnityViewContentUpdateEvent = Readonly<{
   message: string;
 }>;
@@ -29,6 +33,11 @@ export default class UnityView extends React.Component<RNUnityViewProps> {
     methodName: string,
     message: string
   ) => {
+    if (DEBUG_TIMING) {
+      console.log(
+        `[RNUnityTiming] JS postMessage ${gameObject}/${methodName} hasRef=${!!this.ref.current}`
+      );
+    }
     if (this.ref.current) {
       Commands.postMessage(this.ref.current, gameObject, methodName, message);
     }
@@ -64,6 +73,12 @@ export default class UnityView extends React.Component<RNUnityViewProps> {
     return {
       ...this.props,
     };
+  }
+
+  componentDidMount() {
+    if (DEBUG_TIMING) {
+      console.log('[RNUnityTiming] JS UnityView mounted');
+    }
   }
 
   componentWillUnmount() {
