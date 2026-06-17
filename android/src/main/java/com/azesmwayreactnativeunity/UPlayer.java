@@ -107,15 +107,11 @@ public class UPlayer {
     }
 
     public void setZ(float v) throws NoSuchMethodException, InvocationTargetException, IllegalAccessException {
-        // setZ is a public View API (API 21+, minSdk here is 26), so apply it to
-        // the Unity frame view directly. The previous reflection used
-        // getMethod("setZ") with no parameter types, which always threw
-        // NoSuchMethodException (the real method is setZ(float)) and silently
-        // did nothing.
-        FrameLayout frame = requestFrame();
-        if (frame != null) {
-            frame.setZ(v);
-        }
+        // Intentionally a no-op. This historically did nothing (the old reflection
+        // always threw NoSuchMethodException), and the embedded Unity SurfaceView
+        // depends on that behaviour: actually applying setZ(-1f) pushes the Unity
+        // frame behind the RN view, the surface never attaches, and Unity never
+        // boots. Leaving Z untouched is what keeps Android startup working.
     }
 
     public Object getContextPlayer() {

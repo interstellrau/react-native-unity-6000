@@ -3,8 +3,6 @@ package com.azesmwayreactnativeunity;
 import android.app.Activity;
 import android.graphics.PixelFormat;
 import android.os.Build;
-import android.os.Handler;
-import android.os.Looper;
 import android.util.Log;
 import android.view.ViewGroup;
 import android.view.WindowManager;
@@ -19,9 +17,10 @@ public class ReactNativeUnity {
     // Set false for production — this is for tracing the embedded load path.
     public static final boolean DEBUG_TIMING = true;
     static final String TIMING_TAG = "RNUnityTiming";
-    // Non-blocking delay (ms) between constructing the UnityPlayer and attaching
-    // it. Tunable: lower shows Unity sooner, but risks a startup race on slower
-    // devices. Previously this was a blocking Thread.sleep on the UI thread.
+    // Blocking wait (ms) between constructing the UnityPlayer and attaching it.
+    // Load-bearing: fixes "unity cannot start when startup" on Android. Must stay
+    // a blocking sleep on the UI thread — making it a non-blocking post regressed
+    // startup so Unity never booted (no surface attach).
     private static final long UNITY_STARTUP_DELAY_MS = 1000;
     private static UPlayer unityPlayer;
     public static boolean _isUnityReady;
@@ -60,7 +59,7 @@ public class ReactNativeUnity {
                 if (DEBUG_TIMING) Log.i(TIMING_TAG, "createPlayer.run begin on thread=" + Thread.currentThread().getName());
                 activity.getWindow().setFormat(PixelFormat.RGBA_8888);
                 int flag = activity.getWindow().getAttributes().flags;
-                final boolean fullScreen =
+                boolean fullScreen =
                     (flag & WindowManager.LayoutParams.FLAG_FULLSCREEN) == WindowManager.LayoutParams.FLAG_FULLSCREEN;
 
                 try {
@@ -74,55 +73,47 @@ public class ReactNativeUnity {
                     // NPE-ing on the calls below.
                     return;
                 }
-                if (DEBUG_TIMING) Log.i(TIMING_TAG, "UnityPlayer constructed; attach scheduled in " + UNITY_STARTUP_DELAY_MS + "ms");
+                if (DEBUG_TIMING) Log.i(TIMING_TAG, "UnityPlayer constructed");
 
-                // Give UnityPlayer a moment to spin up its native side before we
-                // attach and resume it. This used to be a blocking
-                // Thread.sleep(1000) on the UI thread, which froze the app (ANR
-                // risk) and starved Unity's own main-thread init. A non-blocking
-                // delayed post keeps the UI responsive and lets Unity initialise
-                // in parallel.
-                new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
-                    @Override
-                    public void run() {
-                        if (unityPlayer == null) {
-                            return;
-                        }
+                try {
+                    // Load-bearing blocking wait: fixes "unity cannot start when
+                    // startup". Do NOT replace with a non-blocking post — that
+                    // regresses startup so Unity never boots / attaches a surface.
+                    Thread.sleep(UNITY_STARTUP_DELAY_MS);
+                } catch (Exception e) {}
 
-                        if (DEBUG_TIMING) Log.i(TIMING_TAG, "post-delay attach begin on thread=" + Thread.currentThread().getName());
+                if (DEBUG_TIMING) Log.i(TIMING_TAG, "attach begin on thread=" + Thread.currentThread().getName());
 
-                        // start unity
-                        try {
-                            addUnityViewToBackground();
-                        } catch (InvocationTargetException | IllegalAccessException | NoSuchMethodException e) {
-                            Log.e(TAG, "Failed to add Unity view to background", e);
-                        }
+                // start unity
+                try {
+                    addUnityViewToBackground();
+                } catch (InvocationTargetException | IllegalAccessException | NoSuchMethodException e) {
+                    Log.e(TAG, "Failed to add Unity view to background", e);
+                }
 
-                        unityPlayer.windowFocusChanged(true);
+                unityPlayer.windowFocusChanged(true);
 
-                        try {
-                            unityPlayer.requestFocusPlayer();
-                        } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
-                            Log.e(TAG, "Failed to request focus on Unity player", e);
-                        }
+                try {
+                    unityPlayer.requestFocusPlayer();
+                } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
+                    Log.e(TAG, "Failed to request focus on Unity player", e);
+                }
 
-                        unityPlayer.resume();
+                unityPlayer.resume();
 
-                        if (!fullScreen) {
-                            activity.getWindow().addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN);
-                            activity.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
-                        }
+                if (!fullScreen) {
+                    activity.getWindow().addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN);
+                    activity.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+                }
 
-                        _isUnityReady = true;
-                        if (DEBUG_TIMING) Log.i(TIMING_TAG, "_isUnityReady=true; invoking onReady (player attached + resumed)");
+                _isUnityReady = true;
+                if (DEBUG_TIMING) Log.i(TIMING_TAG, "_isUnityReady=true; invoking onReady (player attached + resumed)");
 
-                        try {
-                            callback.onReady();
-                        } catch (InvocationTargetException | IllegalAccessException | NoSuchMethodException e) {
-                            Log.e(TAG, "Unity onReady callback failed", e);
-                        }
-                    }
-                }, UNITY_STARTUP_DELAY_MS);
+                try {
+                    callback.onReady();
+                } catch (InvocationTargetException | IllegalAccessException | NoSuchMethodException e) {
+                    Log.e(TAG, "Unity onReady callback failed", e);
+                }
             }
         });
     }
