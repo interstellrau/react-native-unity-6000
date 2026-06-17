@@ -3,6 +3,7 @@ package com.azesmwayreactnativeunity;
 import static com.azesmwayreactnativeunity.ReactNativeUnity.*;
 
 import android.os.Handler;
+import android.util.Log;
 import android.view.View;
 
 import androidx.annotation.NonNull;
@@ -29,6 +30,7 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
   ReactApplicationContext context;
   static ReactNativeUnityView view;
   public static final String NAME = "RNUnityView";
+  private static final String TAG = "ReactNativeUnity";
 
   public ReactNativeUnityViewManager(ReactApplicationContext context) {
     super();
@@ -51,7 +53,9 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
     if (getPlayer() != null) {
         try {
             view.setUnityPlayer(getPlayer());
-        } catch (InvocationTargetException | NoSuchMethodException | IllegalAccessException e) {}
+        } catch (InvocationTargetException | NoSuchMethodException | IllegalAccessException e) {
+            Log.e(TAG, "Failed to attach existing Unity player to view", e);
+        }
     } else {
         try {
             createPlayer(context.getCurrentActivity(), new UnityPlayerCallback() {
@@ -76,7 +80,9 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
                 reactContext.getJSModule(RCTEventEmitter.class).receiveEvent(view.getId(), "onPlayerQuit", data);
               }
             });
-        } catch (InvocationTargetException | NoSuchMethodException | IllegalAccessException e) {}
+        } catch (InvocationTargetException | NoSuchMethodException | IllegalAccessException e) {
+            Log.e(TAG, "Failed to create Unity player", e);
+        }
     }
 
     return view;

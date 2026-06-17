@@ -3,6 +3,7 @@ package com.azesmwayreactnativeunity;
 import android.app.Activity;
 import android.graphics.PixelFormat;
 import android.os.Build;
+import android.util.Log;
 import android.view.ViewGroup;
 import android.view.WindowManager;
 
@@ -11,6 +12,7 @@ import static android.view.ViewGroup.LayoutParams.MATCH_PARENT;
 import java.lang.reflect.InvocationTargetException;
 
 public class ReactNativeUnity {
+    private static final String TAG = "ReactNativeUnity";
     private static UPlayer unityPlayer;
     public static boolean _isUnityReady;
     public static boolean _isUnityPaused;
@@ -51,7 +53,9 @@ public class ReactNativeUnity {
 
                     try {
                         unityPlayer = new UPlayer(activity, callback);
-                    } catch (ClassNotFoundException | InstantiationException | IllegalAccessException | InvocationTargetException e) {}
+                    } catch (ClassNotFoundException | InstantiationException | IllegalAccessException | InvocationTargetException e) {
+                        Log.e(TAG, "Failed to create Unity player", e);
+                    }
 
                     try {
                         // wait a moment. fix unity cannot start when startup.
@@ -61,13 +65,17 @@ public class ReactNativeUnity {
                     // start unity
                     try {
                         addUnityViewToBackground();
-                    } catch (InvocationTargetException | IllegalAccessException | NoSuchMethodException e) {}
+                    } catch (InvocationTargetException | IllegalAccessException | NoSuchMethodException e) {
+                        Log.e(TAG, "Failed to add Unity view to background", e);
+                    }
 
                     unityPlayer.windowFocusChanged(true);
 
                     try {
                         unityPlayer.requestFocusPlayer();
-                    } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {}
+                    } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
+                        Log.e(TAG, "Failed to request focus on Unity player", e);
+                    }
 
                     unityPlayer.resume();
 
@@ -80,7 +88,9 @@ public class ReactNativeUnity {
 
                     try {
                         callback.onReady();
-                    } catch (InvocationTargetException | IllegalAccessException | NoSuchMethodException e) {}
+                    } catch (InvocationTargetException | IllegalAccessException | NoSuchMethodException e) {
+                        Log.e(TAG, "Unity onReady callback failed", e);
+                    }
                 }
             });
         }
