@@ -7,12 +7,15 @@ export type UnityViewContentUpdateEvent = Readonly<{
   message: string;
 }>;
 
+export type UnityViewReadyEvent = Readonly<{}>;
+
 export interface NativeProps extends ViewProps {
   androidKeepPlayerMounted?: boolean;
   fullScreen?: boolean;
   onUnityMessage?: DirectEventHandler<UnityViewContentUpdateEvent>;
   onPlayerUnload?: DirectEventHandler<UnityViewContentUpdateEvent>;
   onPlayerQuit?: DirectEventHandler<UnityViewContentUpdateEvent>;
+  onUnityReady?: DirectEventHandler<UnityViewReadyEvent>;
 }
 
 export interface NativeCommands {

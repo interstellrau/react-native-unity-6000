@@ -6,6 +6,7 @@ import android.content.Context;
 
 import android.annotation.SuppressLint;
 import android.content.res.Configuration;
+import android.util.Log;
 import android.widget.FrameLayout;
 
 import java.lang.reflect.InvocationTargetException;
@@ -62,7 +63,9 @@ public class ReactNativeUnityView extends FrameLayout {
         try {
             addUnityViewToBackground();
         } catch (InvocationTargetException | NoSuchMethodException | IllegalAccessException e) {
-            throw new RuntimeException(e);
+            // Don't crash the app on a detach-time race (e.g. during a screen
+            // transition); the move-to-background is best-effort.
+            Log.e("ReactNativeUnity", "Failed to move Unity view to background on detach", e);
         }
     }
 

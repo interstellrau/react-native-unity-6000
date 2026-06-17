@@ -8,8 +8,6 @@ NSString *bundlePathStr = @"/Frameworks/UnityFramework.framework";
 int gArgc = 1;
 
 static NSDictionary *appLaunchOpts;
-static RNUnityView *sharedInstance = nil;
-static BOOL sUnityBootStarted = NO;
 
 #pragma mark - Unity Loader
 
@@ -33,6 +31,10 @@ static UnityFramework* UnityFrameworkLoad(void) {
     [ufw setDataBundleId:[bundle.bundleIdentifier cStringUsingEncoding:NSUTF8StringEncoding]];
     return ufw;
 }
+
+@interface RNUnityView ()
+@property (nonatomic, assign) BOOL didEmitReady;
+@end
 
 @implementation RNUnityView
 
@@ -93,9 +95,6 @@ static UnityFramework* UnityFrameworkLoad(void) {
         [self setUfw:nil];
     }
 
-    sUnityBootStarted = NO;
-    sharedInstance = nil;
-
     UnityFramework *ufw = [UnityFramework getInstance];
     if (ufw && [UnityFramework respondsToSelector:@selector(setInstance:)]) {
         ((void (*)(id, SEL, id))objc_msgSend)(UnityFramework.class, @selector(setInstance:), nil);
@@ -114,18 +113,48 @@ static UnityFramework* UnityFrameworkLoad(void) {
     });
 }
 
+#pragma mark - Pause / Resume
+
+- (void)pauseUnity:(BOOL)pause {
+    if ([self unityIsInitialized]) {
+        [[self ufw] pause:pause];
+    }
+}
+
 #pragma mark - UIView Layout
 
 - (void)layoutSubviews {
    [super layoutSubviews];
 
-   if(![self unityIsInitialized]) {
+   // Wait for real, non-zero bounds before booting Unity. Booting at a zero
+   // size triggers Unity's `MTLTextureDescriptor has width of zero` crash
+   // (see "Known issues" in the README).
+   if (self.bounds.size.width <= 0 || self.bounds.size.height <= 0) {
+      return;
+   }
+
+   if (![self unityIsInitialized]) {
       [self initUnityModule];
    }
 
-   if([self unityIsInitialized]) {
-      self.ufw.appController.rootView.frame = self.bounds;
-      [self addSubview:self.ufw.appController.rootView];
+   if ([self unityIsInitialized]) {
+      UIView *rootView = self.ufw.appController.rootView;
+      rootView.frame = self.bounds;
+      // Only parent the Unity root view once; re-adding it on every layout
+      // pass causes needless re-parenting and flicker.
+      if (rootView.superview != self) {
+         [self addSubview:rootView];
+      }
+
+      // Signal readiness once per view, whether Unity booted just now or was
+      // already running when this view mounted. Lets JS drop fixed startup
+      // timeouts in favour of the onUnityReady event.
+      if (!self.didEmitReady) {
+         self.didEmitReady = YES;
+         if (self.onUnityReady) {
+            self.onUnityReady(@{});
+         }
+      }
    }
 }
 
@@ -136,7 +165,7 @@ static UnityFramework* UnityFrameworkLoad(void) {
 }
 
 - (NSArray<NSString *> *)supportedEvents {
-    return @[@"onUnityMessage", @"onPlayerUnload", @"onPlayerQuit"];
+    return @[@"onUnityMessage", @"onPlayerUnload", @"onPlayerQuit", @"onUnityReady"];
 }
 
 - (void)sendMessageToMobileApp:(NSString *)message {
@@ -162,7 +191,6 @@ static UnityFramework* UnityFrameworkLoad(void) {
         [[self ufw] unregisterFrameworkListener:self];
         [self setUfw:nil];
     }
-    sUnityBootStarted = NO;
     if (self.onPlayerUnload) self.onPlayerUnload(nil);
 }
 
@@ -172,7 +200,6 @@ static UnityFramework* UnityFrameworkLoad(void) {
         [[self ufw] unregisterFrameworkListener:self];
         [self setUfw:nil];
     }
-    sUnityBootStarted = NO;
     if (self.onPlayerQuit) self.onPlayerQuit(nil);
 }
 
@@ -181,11 +208,19 @@ static UnityFramework* UnityFrameworkLoad(void) {
 - (instancetype)initWithFrame:(CGRect)frame {
   self = [super initWithFrame:frame];
 
-    if (self) {
-        [self initUnityModule];
-    }
+    // Unity is booted lazily in -layoutSubviews once the view has real
+    // (non-zero) bounds. Booting here would start Unity at CGRectZero and
+    // risk the zero-width Metal texture crash.
 
     return self;
+}
+
+- (void)dealloc {
+    // Defensive: make sure Unity isn't left holding a listener pointer to a
+    // deallocated view, which would crash on the next lifecycle notification.
+    if (_ufw) {
+        [_ufw unregisterFrameworkListener:self];
+    }
 }
 
 @end

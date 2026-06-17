@@ -1,5 +1,5 @@
 import UnityView from '@azesmway/react-native-unity'
-import React, { useEffect, useRef } from 'react'
+import React, { useRef } from 'react'
 import { View } from 'react-native'
 
 interface IMessage {
@@ -9,33 +9,30 @@ interface IMessage {
 }
 
 const Unity = () => {
-  const unityRef = useRef()
+  const unityRef = useRef<UnityView>(null)
+
   const message: IMessage = {
     gameObject: '[Scripts]',
     methodName: 'InitModule',
     message: '{"scene": "GeoPoints"}'
   }
 
-  useEffect(() => {
-    setTimeout(() => {
-      if (unityRef && unityRef.current) {
-        // @ts-ignore
-        unityRef.current.postMessage(message.gameObject, message.methodName, message.message)
-      }
-    }, 6000)
-
-    return () => console.log('unmount')
-  }, [])
+  // Wait for the native onUnityReady event instead of a fixed setTimeout.
+  // This fires as soon as Unity is actually up, so the first message is never
+  // sent too early (dropped) or later than necessary.
+  const handleUnityReady = () => {
+    unityRef.current?.postMessage(message.gameObject, message.methodName, message.message)
+  }
 
   return (
     // If you wrap your UnityView inside a parent, please take care to set dimensions to it (with `flex:1` for example).
     // See the `Know issues` part in the README.
     <View style={{ flex: 1 }}>
       <UnityView
-        // @ts-ignore
         ref={unityRef}
         style={{ flex: 1 }}
-        onUnityMessage={(result: any) => console.log('onUnityMessage ===> ', result.nativeEvent.message)}
+        onUnityReady={handleUnityReady}
+        onUnityMessage={(result) => console.log('onUnityMessage ===> ', result.nativeEvent.message)}
       />
     </View>
   )

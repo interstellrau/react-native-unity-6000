@@ -107,11 +107,15 @@ public class UPlayer {
     }
 
     public void setZ(float v) throws NoSuchMethodException, InvocationTargetException, IllegalAccessException {
-        try {
-            Method setZ = unityPlayer.getClass().getMethod("setZ");
-
-            setZ.invoke(unityPlayer, v);
-        } catch (NoSuchMethodException e) {}
+        // setZ is a public View API (API 21+, minSdk here is 26), so apply it to
+        // the Unity frame view directly. The previous reflection used
+        // getMethod("setZ") with no parameter types, which always threw
+        // NoSuchMethodException (the real method is setZ(float)) and silently
+        // did nothing.
+        FrameLayout frame = requestFrame();
+        if (frame != null) {
+            frame.setZ(v);
+        }
     }
 
     public Object getContextPlayer() {

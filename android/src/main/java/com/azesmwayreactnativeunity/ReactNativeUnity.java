@@ -3,6 +3,9 @@ package com.azesmwayreactnativeunity;
 import android.app.Activity;
 import android.graphics.PixelFormat;
 import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
+import android.util.Log;
 import android.view.ViewGroup;
 import android.view.WindowManager;
 
@@ -11,6 +14,15 @@ import static android.view.ViewGroup.LayoutParams.MATCH_PARENT;
 import java.lang.reflect.InvocationTargetException;
 
 public class ReactNativeUnity {
+    private static final String TAG = "ReactNativeUnity";
+    // Diagnostic startup/message timing (logcat tag "RNUnityTiming").
+    // Set false for production — this is for tracing the embedded load path.
+    public static final boolean DEBUG_TIMING = true;
+    static final String TIMING_TAG = "RNUnityTiming";
+    // Non-blocking delay (ms) between constructing the UnityPlayer and attaching
+    // it. Tunable: lower shows Unity sooner, but risks a startup race on slower
+    // devices. Previously this was a blocking Thread.sleep on the UI thread.
+    private static final long UNITY_STARTUP_DELAY_MS = 1000;
     private static UPlayer unityPlayer;
     public static boolean _isUnityReady;
     public static boolean _isUnityPaused;
@@ -38,52 +50,81 @@ public class ReactNativeUnity {
             return;
         }
 
-        if (activity != null) {
-            activity.runOnUiThread(new Runnable() {
-                @Override
-                public void run() {
-                    activity.getWindow().setFormat(PixelFormat.RGBA_8888);
-                    int flag = activity.getWindow().getAttributes().flags;
-                    boolean fullScreen = false;
-                    if ((flag & WindowManager.LayoutParams.FLAG_FULLSCREEN) == WindowManager.LayoutParams.FLAG_FULLSCREEN) {
-                        fullScreen = true;
-                    }
-
-                    try {
-                        unityPlayer = new UPlayer(activity, callback);
-                    } catch (ClassNotFoundException | InstantiationException | IllegalAccessException | InvocationTargetException e) {}
-
-                    try {
-                        // wait a moment. fix unity cannot start when startup.
-                        Thread.sleep(1000);
-                    } catch (Exception e) {}
-
-                    // start unity
-                    try {
-                        addUnityViewToBackground();
-                    } catch (InvocationTargetException | IllegalAccessException | NoSuchMethodException e) {}
-
-                    unityPlayer.windowFocusChanged(true);
-
-                    try {
-                        unityPlayer.requestFocusPlayer();
-                    } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {}
-
-                    unityPlayer.resume();
-
-                    if (!fullScreen) {
-                        activity.getWindow().addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN);
-                        activity.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
-                    }
-
-                    _isUnityReady = true;
-
-                    try {
-                        callback.onReady();
-                    } catch (InvocationTargetException | IllegalAccessException | NoSuchMethodException e) {}
-                }
-            });
+        if (activity == null) {
+            return;
         }
+
+        activity.runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                if (DEBUG_TIMING) Log.i(TIMING_TAG, "createPlayer.run begin on thread=" + Thread.currentThread().getName());
+                activity.getWindow().setFormat(PixelFormat.RGBA_8888);
+                int flag = activity.getWindow().getAttributes().flags;
+                final boolean fullScreen =
+                    (flag & WindowManager.LayoutParams.FLAG_FULLSCREEN) == WindowManager.LayoutParams.FLAG_FULLSCREEN;
+
+                try {
+                    unityPlayer = new UPlayer(activity, callback);
+                } catch (ClassNotFoundException | InstantiationException | IllegalAccessException | InvocationTargetException e) {
+                    Log.e(TAG, "Failed to create Unity player", e);
+                }
+
+                if (unityPlayer == null) {
+                    // Construction failed (already logged). Bail instead of
+                    // NPE-ing on the calls below.
+                    return;
+                }
+                if (DEBUG_TIMING) Log.i(TIMING_TAG, "UnityPlayer constructed; attach scheduled in " + UNITY_STARTUP_DELAY_MS + "ms");
+
+                // Give UnityPlayer a moment to spin up its native side before we
+                // attach and resume it. This used to be a blocking
+                // Thread.sleep(1000) on the UI thread, which froze the app (ANR
+                // risk) and starved Unity's own main-thread init. A non-blocking
+                // delayed post keeps the UI responsive and lets Unity initialise
+                // in parallel.
+                new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (unityPlayer == null) {
+                            return;
+                        }
+
+                        if (DEBUG_TIMING) Log.i(TIMING_TAG, "post-delay attach begin on thread=" + Thread.currentThread().getName());
+
+                        // start unity
+                        try {
+                            addUnityViewToBackground();
+                        } catch (InvocationTargetException | IllegalAccessException | NoSuchMethodException e) {
+                            Log.e(TAG, "Failed to add Unity view to background", e);
+                        }
+
+                        unityPlayer.windowFocusChanged(true);
+
+                        try {
+                            unityPlayer.requestFocusPlayer();
+                        } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
+                            Log.e(TAG, "Failed to request focus on Unity player", e);
+                        }
+
+                        unityPlayer.resume();
+
+                        if (!fullScreen) {
+                            activity.getWindow().addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN);
+                            activity.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+                        }
+
+                        _isUnityReady = true;
+                        if (DEBUG_TIMING) Log.i(TIMING_TAG, "_isUnityReady=true; invoking onReady (player attached + resumed)");
+
+                        try {
+                            callback.onReady();
+                        } catch (InvocationTargetException | IllegalAccessException | NoSuchMethodException e) {
+                            Log.e(TAG, "Unity onReady callback failed", e);
+                        }
+                    }
+                }, UNITY_STARTUP_DELAY_MS);
+            }
+        });
     }
 
     public static void pause() {
@@ -105,6 +146,17 @@ public class ReactNativeUnity {
             unityPlayer.unload();
             _isUnityPaused = false;
         }
+    }
+
+    public static void destroy() {
+        if (unityPlayer != null) {
+            unityPlayer.destroy();
+        }
+        // Drop the reference and reset state so a later mount recreates a fresh
+        // player instead of handing back a destroyed one.
+        unityPlayer = null;
+        _isUnityReady = false;
+        _isUnityPaused = false;
     }
 
     public static void addUnityViewToBackground() throws InvocationTargetException, NoSuchMethodException, IllegalAccessException {

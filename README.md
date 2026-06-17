@@ -134,7 +134,7 @@ If you're using expo, you're done. The built-in expo plugin will handle the rest
 ## Sample code
 
 ```jsx
-import React, { useRef, useEffect } from 'react';
+import React, { useRef } from 'react';
 
 import UnityView from '@azesmway/react-native-unity';
 import { View } from 'react-native';
@@ -148,26 +148,27 @@ interface IMessage {
 const Unity = () => {
   const unityRef = useRef<UnityView>(null);
 
-  useEffect(() => {
-    if (unityRef?.current) {
-      const message: IMessage = {
-        gameObject: 'gameObject',
-        methodName: 'methodName',
-        message: 'message',
-      };
-      unityRef.current.postMessage(
-        message.gameObject,
-        message.methodName,
-        message.message
-      );
-    }
-  }, []);
+  // Wait for the onUnityReady event before sending the first message, so it is
+  // never sent before Unity has finished starting up (which would drop it).
+  const onUnityReady = () => {
+    const message: IMessage = {
+      gameObject: 'gameObject',
+      methodName: 'methodName',
+      message: 'message',
+    };
+    unityRef.current?.postMessage(
+      message.gameObject,
+      message.methodName,
+      message.message
+    );
+  };
 
   return (
     <View style={{ flex: 1 }}>
       <UnityView
         ref={unityRef}
         style={{ flex: 1 }}
+        onUnityReady={onUnityReady}
         onUnityMessage={(result) => {
           console.log('onUnityMessage', result.nativeEvent.message);
         }}
@@ -183,6 +184,9 @@ export default Unity;
 
 - `style: ViewStyle` - styles the UnityView. (Won't show on Android without dimensions. Recommended to give it `flex: 1` as in the example)
 - `onUnityMessage?: (event: NativeSyntheticEvent)` - receives a message from a Unity
+- `onUnityReady?: (event: NativeSyntheticEvent)` - fired once the Unity player has started and its view is attached. Use this instead of a fixed timeout to know when it's safe to `postMessage`. Note: it signals the player is up, not that a specific scene has finished loading — for scene-level readiness, have your Unity scene call back via `sendMessageToMobileApp` (received through `onUnityMessage`).
+- `onPlayerUnload?: (event: NativeSyntheticEvent)` - fired when the Unity player is unloaded.
+- `onPlayerQuit?: (event: NativeSyntheticEvent)` - fired when the Unity player quits.
 - `androidKeepPlayerMounted?: boolean` - if set to true, keep the player mounted even when the view that contains it has lost focus. The player will be paused on blur and resumed on focus. **ANDROID ONLY**
 - `fullScreen?: boolean` - defaults to true. If set to false, will not request full screen access. **ANDROID ONLY**
 
