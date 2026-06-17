@@ -21,13 +21,37 @@ public class ReactNativeUnityView extends FrameLayout {
   }
 
   public void setUnityPlayer(UPlayer player) throws InvocationTargetException, NoSuchMethodException, IllegalAccessException {
+    if (DEBUG_TIMING) Log.i(TIMING_TAG, "setUnityPlayer -> addUnityViewToGroup (view " + getWidth() + "x" + getHeight()
+        + " vis=" + getVisibility() + " attached=" + isAttachedToWindow() + " windowVis=" + getWindowVisibility() + ")");
     this.view = player;
     addUnityViewToGroup(this);
   }
 
   @Override
+  protected void onAttachedToWindow() {
+    super.onAttachedToWindow();
+    if (DEBUG_TIMING) Log.i(TIMING_TAG, "View.onAttachedToWindow " + getWidth() + "x" + getHeight()
+        + " vis=" + getVisibility() + " windowVis=" + getWindowVisibility());
+  }
+
+  @Override
+  protected void onWindowVisibilityChanged(int visibility) {
+    super.onWindowVisibilityChanged(visibility);
+    if (DEBUG_TIMING) Log.i(TIMING_TAG, "View.onWindowVisibilityChanged=" + visibility + " (0=VISIBLE 4=INVISIBLE 8=GONE)");
+  }
+
+  @Override
+  protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+    super.onSizeChanged(w, h, oldw, oldh);
+    if (DEBUG_TIMING) Log.i(TIMING_TAG, "View.onSizeChanged " + w + "x" + h);
+  }
+
+  @Override
   public void onWindowFocusChanged(boolean hasWindowFocus) {
     super.onWindowFocusChanged(hasWindowFocus);
+
+    if (DEBUG_TIMING) Log.i(TIMING_TAG, "View.onWindowFocusChanged=" + hasWindowFocus
+        + " attached=" + isAttachedToWindow() + " " + getWidth() + "x" + getHeight() + " vis=" + getVisibility());
 
     if (view == null) {
       return;
@@ -59,6 +83,7 @@ public class ReactNativeUnityView extends FrameLayout {
 
   @Override
   protected void onDetachedFromWindow() {
+    if (DEBUG_TIMING) Log.i(TIMING_TAG, "View.onDetachedFromWindow keepMounted=" + keepPlayerMounted);
     if (!this.keepPlayerMounted) {
         try {
             addUnityViewToBackground();

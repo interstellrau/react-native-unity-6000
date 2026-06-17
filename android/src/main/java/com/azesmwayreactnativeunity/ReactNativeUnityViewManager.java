@@ -218,6 +218,7 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
 
   @Override
   public void onHostResume() {
+    if (DEBUG_TIMING) Log.i(TIMING_TAG, "onHostResume (ready=" + isUnityReady() + ") -> resuming Unity");
     if (isUnityReady()) {
       assert getPlayer() != null;
       getPlayer().resume();
@@ -227,6 +228,7 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
 
   @Override
   public void onHostPause() {
+    if (DEBUG_TIMING) Log.i(TIMING_TAG, "onHostPause (ready=" + isUnityReady() + ") -> pausing Unity");
     if (isUnityReady()) {
       assert getPlayer() != null;
       getPlayer().pause();
