@@ -128,6 +128,16 @@ If you're using expo, you're done. The built-in expo plugin will handle the rest
 
 - Does not work on the iOS simulator.
 - On iOS the Unity view is waiting for a parent with dimensions greater than 0 (from RN side). Please take care of this because if it is not the case, your app will crash with the native message `MTLTextureDescriptor has width of zero`.
+- **Android: very slow first scene load (~20–30s) on cold start, while iOS and a standalone Unity build are fast.** The host app's APK is compressing Unity's asset files, so Unity has to decompress them on the CPU before the first frame can render. The `unityStreamingAssets` property in setup step 3 only covers the `unityLibrary` module — the final APK is packaged by the **app** module, which re-compresses unless you tell it not to. Add to `android/app/build.gradle`:
+  ```groovy
+  android {
+    // AGP 7+ : androidResources { }   |   older AGP : aaptOptions { }
+    androidResources {
+      noCompress += ['.unity3d', '.ress', '.resource', '.obb', '.bundle']
+    }
+  }
+  ```
+  See [`docs/android-cold-start.md`](docs/android-cold-start.md) for the full write-up.
 
 # Usage
 
