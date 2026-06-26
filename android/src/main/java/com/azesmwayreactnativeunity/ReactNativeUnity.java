@@ -171,15 +171,7 @@ public class ReactNativeUnity {
         }
 
         final Activity activity = ((Activity) unityPlayer.getContextPlayer());
-        // Attach the background surface at FULL size, not 1x1. Booting Unity's
-        // first frame against a degenerate 1x1 surface and then resizing it to
-        // MATCH_PARENT when the view is re-parented into the RN tree strands the
-        // first present for ~24s on cold start for builds whose present path
-        // depends on real display/vsync timing (recent frame-pacing / vSync /
-        // targetFrameRate-from-refreshRate optimisations). Full size from the
-        // start => the swapchain is created once at final geometry, with no
-        // mid-first-present resize.
-        ViewGroup.LayoutParams layoutParams = new ViewGroup.LayoutParams(MATCH_PARENT, MATCH_PARENT);
+        ViewGroup.LayoutParams layoutParams = new ViewGroup.LayoutParams(1, 1);
         activity.addContentView(unityPlayer.requestFrame(), layoutParams);
     }
 
