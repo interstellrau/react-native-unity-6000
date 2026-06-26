@@ -1,108 +1,96 @@
-# Android cold-start: Unity view takes ~30s on first launch
+# Android cold-start: Unity stalls ~24s after `UnityReady` (first launch)
 
-Brief for the Unity team. The React Native bridge is **not** the cause; the fix
-is a small change in the Unity startup coroutine (plus an optional RN-side
-splash tweak).
+Brief for the Unity team. The React Native bridge is **not** the cause — a
+Perfetto trace localises the stall to a **blocking loop on Unity's main thread**
+that runs *after* `UnityReady`, before the first `Main Camera` render. Fix is
+Unity-side.
+
+> Supersedes an earlier version of this note that blamed `WaitForEndOfFrame` /
+> splash occlusion. That theory was **disproven** by the trace below — presents
+> work during the splash, and the stall is CPU-bound main-thread work, not a
+> presentation wait.
 
 ## TL;DR
-On a **cold** app launch, `UnityReady` is gated on `WaitForEndOfFrame`, which
-cannot complete while the React Native splash overlay occludes the Unity
-`SurfaceView` — so it blocks ~22–23s every cold boot. **Fix:** send `UnityReady`
-as soon as the scene/mannequin content is built, without waiting for a
-presented frame.
+On a cold launch, between sending `UnityReady` and the first `Main Camera`
+render, `UnityMain` runs a **~24-second blocking poll/compute loop** (~2,600
+iterations) that never yields to the engine, so no frames render until it exits
+on a timeout. Standalone the same build does this in ~2s. Convert the blocking
+loop into a coroutine that **yields each iteration** (or render defaults
+immediately and apply host data when it arrives).
 
 ## Symptom
-| Scenario | Unity ready |
+| Scenario | First camera render |
 | --- | --- |
-| Cold first launch | ~33s |
+| Cold first launch, embedded | ~34s (`UnityReady` ~11s + ~24s stall) |
 | Warm re-mount (same process) | ~6–7s |
-| Standalone Unity build (no RN) | ~3s |
+| Standalone Unity build (no RN) | ~2–3s |
 
-## Evidence (from the app's own `[Ustyler]` startup markers)
+## Evidence (Perfetto, cold boot, Pixel 6 Pro, bare full-screen `<UnityView>`)
+The freeze is the span from `UnityReady` to `RENDER Main Camera frame 1` — the
+player loop is frozen the whole time (the app's own `WATCHDOG` logs frame 1 →
+frame 2 as **+24,000 ms**).
 
-**Cold boot:**
-```
-[Ustyler] Startup: engine ready ... at 8.04s
-[Ustyler] Startup: first scene LOADED ... at 8.11s
-[Ustyler] <<< wait DesignController+mannequin END +2291 ms      (at 10.39s)
-[Ustyler] >>> WaitForEndOfFrame START at 10.39s
-[Ustyler] <<< WaitForEndOfFrame END +23044 ms                  <-- the entire delay
-[Ustyler] UnityReady at 33.44s
-[Ustyler] WATCHDOG: frame 2 ... +23091 ms since prev frame
-```
+`UnityMain` thread, measured over the freeze window:
 
-**Warm re-mount (same content, same device):**
-```
-[Ustyler] <<< WaitForEndOfFrame END +66 ms
-[Ustyler] UnityReady at 6.15s
-```
+| Metric | Value | What it rules out |
+| --- | --- | --- |
+| **Running** | ~21,000 ms | — it is CPU-bound (doing work) |
+| Sleeping (self-timed, **null** waker) | ~8,800 ms | short poll sleeps, not waiting on another thread |
+| **Runnable** (waiting for a CPU) | **~99 ms** | CPU contention / starvation |
+| Cores used | **CPU 6 & 7 only** (Cortex-X1 prime) | little-core / scheduling throttle |
+| Woken by `Loading.AsyncRead` | ~5 ms total | an asset-loading stall |
+| `Loading.AsyncRead` own state | asleep ~18.4 s | the loader being the bottleneck |
 
-The only thing that explodes on cold boot is `WaitForEndOfFrame`. Everything
-else is within ~2s. So the cold delay is 100% a first-frame **presentation**
-wait — not engine init, scene load, or shader compilation (the Vulkan pipeline
-cache loads fine, and the warm path proves the same yield returns in 66ms).
+Derived shape of the loop (from slice counts): **~2,600 iterations of ~8 ms
+compute + ~3.5 ms sleep**, on the prime cores, blocking rendering. It
+self-releases at ~24 s (a **timeout**) on a stripped test screen; in the full
+app the release sometimes coincides with a later navigation event.
 
-## Root cause: vsync starvation while the splash occludes Unity
-- The startup coroutine yields `WaitForEndOfFrame`, which only resumes after
-  Unity renders **and presents** a frame.
-- On cold boot the RN splash overlay sits opaque over the Unity `SurfaceView`.
-  Android does not composite a fully-occluded `SurfaceView`, so Unity's surface
-  receives **no vsync** and the player loop cannot advance —
-  `WaitForEndOfFrame` hangs.
-- The RN side keeps the splash up until it receives `UnityReady`. So: splash
-  waits for `UnityReady` → `UnityReady` waits for a presented frame → the frame
-  can't present while the splash occludes it. **Circular wait**, broken only
-  when the splash is eventually removed (~23s).
-- Warm re-mounts reuse a preserved surface
-  (`PersistentUnitySurface.preserveContent`) and never re-enter that state → 66ms.
+## What it is NOT (each disproven directly)
+- **Not the RN bridge.** The Unity view is attached, visible (`windowVis=0`),
+  focused, full-size, with a valid Vulkan swapchain (`SetWindow`,
+  `InitializeOrResetSwapChain 1080x2340`) by ~2 s — long before the stall.
+- **Not async asset loading.** `Loading.AsyncRead` is asleep ~18 s and wakes
+  `UnityMain` for only ~5 ms total. The loader is idle, not starved.
+- **Not CPU contention.** `UnityMain` is Runnable (waiting for a core) only
+  ~99 ms across the entire ~24 s.
+- **Not core/frequency throttling.** `UnityMain` runs ~18 s on the big X1 cores
+  (CPU 6/7), the fastest on the device.
+- **Not vsync / surface / compositor.** The "Made with Unity" splash *animates*
+  (presents work), then holds; tapping the screen does **not** wake it (no input
+  or vsync is involved).
+- **Not the host-app markup.** Reproduces with a single full-screen
+  `<UnityView>`, with and without a parent `backgroundColor`, with and without an
+  init `postMessage`. (The example app is fast only because its `GeoPoints`
+  scene is trivial — it doesn't carry this loop.)
 
-## Fix (Unity side — primary)
-In the startup coroutine, find the `yield return new WaitForEndOfFrame();` that
-sits between the `wait DesignController+mannequin END` step and the `UnityReady`
-send (it's the line that logs `[Ustyler] >>> WaitForEndOfFrame START`). Remove
-that gate — send `UnityReady` as soon as the content is built.
+## Root cause & fix (Unity side)
+A **blocking poll/retry loop on the main thread**, entered right after
+`SendToReact("UnityReady")`, runs ~2,600 iterations without yielding to the
+engine — so frames never advance and the first `Main Camera` render is held off
+for ~24 s. Because it blocks the main thread, anything the loop waits on that
+depends on a **presented frame / `Time.deltaTime` / `WaitForEndOfFrame` / the
+host** can't progress, so it spins to its timeout. Standalone it exits in ~2 s,
+so the embedded path runs ~12× the iterations (or times out).
 
-**Before (conceptual):**
-```csharp
-// ... build DesignController + mannequin, apply stencil / fabric ...
-yield return new WaitForEndOfFrame();        // hangs ~23s on cold boot
-SendToReact("UnityReady", "Unity is fully initialized");
-```
+Steps:
+1. Find the loop that runs immediately after the `UnityReady` send, in the
+   Start / post-ready phase (the **mannequin / DesignController / proportions**
+   area the existing markers flag). Log its **iteration count** and **exit
+   condition** on entry and exit.
+2. Likely fixes:
+   - Convert the blocking `while` / `Thread.Sleep` loop into a **coroutine that
+     `yield`s each iteration**, so the engine renders frames and any
+     frame-/time-dependent condition can resolve (usually 1–2 frames).
+   - If it's waiting on a message/config from React Native, render the **default
+     state immediately** and apply host data when it arrives — don't block with a
+     timeout.
+3. Verify on a cold boot: the `WATCHDOG` frame 1 → frame 2 gap should fall from
+   ~24,000 ms to tens of ms, and `RENDER Main Camera frame 1` should land within
+   ~1 s of `UnityReady`.
 
-**After:**
-```csharp
-// ... build DesignController + mannequin, apply stencil / fabric ...
-// Content is ready here. Do NOT wait for a presented frame: on a cold boot the
-// RN splash occludes the Unity SurfaceView, Android withholds vsync, and
-// WaitForEndOfFrame can't complete until the splash is gone. Signal readiness
-// now; dismissing the splash lets Unity become visible and start presenting.
-SendToReact("UnityReady", "Unity is fully initialized");
-yield break;
-```
-
-After this change, `UnityReady` fires at ~10s. The RN side dismisses the splash,
-the `SurfaceView` un-occludes, vsync starts, and Unity renders. You will **not**
-see a black screen — Unity appears as the splash lifts.
-
-## Complementary fix (React Native side)
-To guarantee Unity is never starved of vsync during startup (and to avoid any
-first-frame flash), don't render the splash as an opaque view fully covering
-`<UnityView>`:
-- render the splash as a **translucent** overlay, or
-- **cross-fade** it out on `UnityReady` instead of a hard cut, or
-- keep it as a sibling that doesn't fully cover the Unity view region.
-
-This keeps the `SurfaceView` composited (so it presents while still loading),
-meaning even a retained `WaitForEndOfFrame` would complete immediately.
-
-## Secondary (optional, after the above)
-Even warm, Unity engine-ready is ~6–8s vs ~3s standalone. The extra is largely
-React Native's cold-start contending with Unity init on the same device. Lower
-priority once the 22s is gone; options: defer mounting `<UnityView>` until the
-RN screen has settled, or reduce concurrent RN startup work / network on launch.
-
-## How to verify
-Re-export with the change and check the same `[Ustyler]` markers on a **cold**
-boot:
-- `UnityReady` now appears at ~10s (not ~33s).
-- The `WaitForEndOfFrame` gap is gone (or tens of ms).
+## React Native bridge status
+No change required in `@azesmway/react-native-unity` for this stall — the trace
+exonerates it. The bridge improvements already in place (the `onUnityReady`
+handshake, null-safe event emit, lifecycle/teardown hardening) remain useful for
+stability but are unrelated to this issue.
